@@ -74,12 +74,22 @@ h1 { font-weight: 500; font-size: clamp(1.6rem, 3.2vw, 2.5rem); line-height: 1.1
 .layers { display: grid; }
 .layers > * { grid-area: 1 / 1; min-width: 0; }
 .layers .formula, .nlayer { will-change: opacity, transform; }
-/* once the numbers are in, the letters do not leave: they shrink, turn grey and park just above, so each number can be read against its letter */
-#formula { --mix: 0; --lab: 1; transform-origin: 0 0; position: relative; z-index: 1; color: color-mix(in srgb, var(--ink), var(--mute) calc(var(--mix) * 100%)); }
+/* once the numbers are in, the letters do not leave: they turn grey and shrink to the numbers' own size, in a row right above them.
+   Each letter takes the width of its number's slot, so every letter sits over its number */
+#formula { --mix: 0; --mixw: 0; --lab: 1; transform-origin: 0 0; position: relative; color: color-mix(in srgb, var(--ink), var(--mute) calc(var(--mix) * 100%)); }
 #formula .bk, #formula .lab { opacity: var(--lab); animation-fill-mode: backwards; }   /* the entrance animation must not hold opacity at 1 afterwards */
 #formula .dt { color: inherit; }
 #formula > .g.out { transform: translate(calc(var(--dx, 0px) * var(--mix)), calc(var(--dy, 0px) * var(--mix))); }   /* on a phone the formula is two lines; parked, it closes up into one */
-.nlayer { align-self: start; opacity: 0; visibility: hidden; }
+#formula.parked { pointer-events: none; }
+#formula.parked .row .sym { pointer-events: auto; }
+#formula.parked .lab .sym { pointer-events: none; }
+#formula.cols .L { display: inline-block; text-align: center; min-width: calc(var(--w, 0px) * var(--mixw)); }
+#formula.cols .g.ppl > .row { justify-content: center; min-width: calc(var(--w, 0px) * var(--mixw)); }
+#formula.cols .g.ppl .L { min-width: 0; }
+/* the numbers carry a small x between factors; the letters keep the same gap, empty */
+#formula.cols .x { display: inline-block; visibility: hidden; font-size: calc(0.62em * var(--mix)); margin-left: calc(0.186 * var(--fs) * var(--mix) - 0.06 * var(--fs) * (1 - var(--mix))); margin-right: calc(0.186 * var(--fs) * var(--mix)); }
+#formula.cols .g.ppl .x { display: none; }
+#formula.cols sup .L, #formula.cols sub.lag .L { font-size: calc(1em + 0.2em * var(--mix)); }   /* small italics need a little more size than small digits to read as well */
 /* letters or numbers: every slot holds both, the hero's class decides which shows */
 .N, .x, .val, .kv { display: none; }
 .nums .L { display: none; }
@@ -857,21 +867,23 @@ tau: function () { return 'Build time. What machines order today starts working 
   }
   /* scroll drives the formula: letters, then the numbers fade in, then the years run from 2026 to the last one shown.
      m = how far the numbers have come in, 0 to 1 */
-  var ghost = { on: true, ty: 0, sc: 0.55, room: 0 };
+  var ghost = { on: true, cols: false, tx: 0, ty: 0, sc: 0.55, room: 0 };
   function setMix(m) {
     var was = nmix > 0.5; nmix = m;
     var L = $('formula'), N = $('nlayer'), soft = !reduce, g = soft ? m : (m > 0.5 ? 1 : 0);
     if (!ghost.on) {                                                // no room above on a short screen: the letters just give way
-      L.style.setProperty('--mix', '0'); L.style.setProperty('--lab', '1');
+      L.style.setProperty('--mix', '0'); L.style.setProperty('--mixw', '0'); L.style.setProperty('--lab', '1');
       L.style.opacity = (1 - g).toFixed(3); L.style.visibility = g >= 1 ? 'hidden' : 'visible'; L.style.pointerEvents = g > 0.5 ? 'none' : '';
       L.style.transform = soft && g > 0 ? 'translateY(' + (-12 * g).toFixed(1) + 'px) scale(' + (1 - 0.04 * g).toFixed(3) + ')' : '';
       L.setAttribute('aria-hidden', g > 0.5 ? 'true' : 'false');
     } else {
     L.style.opacity = ''; L.style.visibility = ''; L.style.pointerEvents = ''; L.removeAttribute('aria-hidden');
-    L.style.setProperty('--mix', g.toFixed(3));                    // the letters stay: smaller, grey, parked above the caption
+    L.style.setProperty('--mix', g.toFixed(3));                    // the letters stay: grey, at the numbers' size, in a row right above them
+    L.style.setProperty('--mixw', (g * g * g).toFixed(4));            // slots widen late, so the row never outgrows the page on the way
     L.style.setProperty('--lab', Math.max(0, 1 - 2.4 * g).toFixed(3));   // their bracket labels go: the numbers carry the same ones
-    L.style.transform = g > 0 ? 'translateY(' + (ghost.ty * g).toFixed(1) + 'px) scale(' + (1 - (1 - ghost.sc) * g).toFixed(3) + ')' : '';
+    L.style.transform = g > 0 ? 'translate(' + (ghost.tx * g).toFixed(2) + 'px,' + (ghost.ty * g).toFixed(1) + 'px) scale(' + (1 - (1 - ghost.sc) * g).toFixed(4) + ')' : '';
     }
+    L.classList.toggle('parked', ghost.on && g > 0.4);
     N.style.opacity = m.toFixed(3);
     N.style.visibility = m <= 0 ? 'hidden' : 'visible'; N.style.pointerEvents = m > 0.5 ? '' : 'none';
     N.style.transform = soft && m < 1 ? 'translateY(' + (12 * (1 - m)).toFixed(1) + 'px)' : '';
@@ -888,23 +900,35 @@ tau: function () { return 'Build time. What machines order today starts working 
     }
   }
   var tick = false, pinTop = 10;
-  /* hold the formula mid-screen, with room above it for the parked letters; set once per layout so nothing shifts while scrolling.
-     offset* sizes ignore transforms, so this is safe to run mid-scroll */
+  /* give every letter the width of its number's slot (in the letters' own, larger, pixels) so the parked row lines up with the numbers */
+  function cols() {
+    if (!ghost.cols) return;
+    var L = $('formula'), F = $('formula-n'), sc = ghost.sc;
+    var a = L.querySelectorAll('.L'), b = F.querySelectorAll('.L'), i, n;
+    for (i = 0; i < a.length; i++) { n = b[i] && b[i].nextElementSibling; if (n && n.classList.contains('N')) a[i].style.setProperty('--w', (n.getBoundingClientRect().width / sc).toFixed(2) + 'px'); }
+    L.querySelector('.g.ppl > .row').style.setProperty('--w', (F.querySelector('.g.ppl > .row').getBoundingClientRect().width / sc).toFixed(2) + 'px');
+  }
+  /* hold the formula mid-screen and make room for the parked letters between the caption and the numbers; set once per layout so
+     nothing shifts while scrolling. offset* sizes ignore transforms, so this is safe to run mid-scroll */
   function place() {
-    var pin = $('pin'), L = $('formula'), lead = L.querySelector('.lead'), last = L.querySelector('.g.out'), one = lead.querySelector('.row'), bar = pin.querySelector('.fbar');
-    var fs = parseFloat(getComputedStyle(L).fontSize), gap = 16;
+    var pin = $('pin'), L = $('formula'), F = $('formula-n'), N = $('nlayer'), lead = L.querySelector('.lead'), last = L.querySelector('.g.out'), one = lead.querySelector('.row');
+    var fs = parseFloat(getComputedStyle(L).fontSize), nfs = parseFloat(getComputedStyle(F).fontSize);
     var symY = lead.querySelector('.sym'), symA = last.querySelector('.row > .sym');
     var topIn = function (el) { var y = 0; while (el && el !== L) { y += el.offsetTop; el = el.offsetParent; } return y; };   // inside the formula, whatever sits in between
     var wrapped = last.offsetTop > one.offsetHeight * 0.5;                  // two lines on a phone
     var dx = wrapped ? lead.offsetLeft + lead.offsetWidth + 0.06 * fs - last.offsetLeft : 0, dy = wrapped ? topIn(symY) - topIn(symA) : 0;
     L.style.setProperty('--dx', dx.toFixed(1) + 'px'); L.style.setProperty('--dy', dy.toFixed(1) + 'px');
-    var wide = last.offsetLeft + dx + last.offsetWidth, tall = one.offsetHeight * 1.2;   // the letters alone, on one line
-    ghost.sc = Math.min(L.clientWidth / wide, Math.max(0.55, 20 / fs));
-    ghost.room = Math.round(tall * ghost.sc + gap);
-    ghost.ty = -(L.offsetTop - bar.offsetTop) - ghost.room;
-    ghost.on = pin.offsetHeight + ghost.room + 14 <= window.innerHeight;
-    var room = ghost.on ? ghost.room : 0;
-    pinTop = Math.max(10 + room, Math.round((window.innerHeight - pin.offsetHeight - room) / 2 + room));
+    ghost.cols = !wrapped && !F.classList.contains('scroll');              // one line: letter over number. Two lines: one compact line of letters
+    L.classList.toggle('cols', ghost.cols);
+    if (ghost.cols) { ghost.sc = nfs / fs; ghost.tx = parseFloat(getComputedStyle(F).marginLeft) - parseFloat(getComputedStyle(L).marginLeft); }
+    else { ghost.sc = Math.min(L.clientWidth / (last.offsetLeft + dx + last.offsetWidth), Math.max(0.55, 20 / fs)); ghost.tx = 0; }
+    ghost.room = Math.round(one.offsetHeight * 1.18 * ghost.sc + 20);
+    ghost.ty = -12;
+    N.style.paddingTop = ghost.room + 'px';
+    ghost.on = pin.offsetHeight + 14 <= window.innerHeight;                // no room on a short screen: keep the plain crossfade
+    if (!ghost.on) N.style.paddingTop = '';
+    cols();
+    pinTop = Math.max(10, Math.round((window.innerHeight - pin.offsetHeight) / 2));
     pin.style.top = pinTop + 'px';
     setMix(nmix);
   }
@@ -915,11 +939,11 @@ tau: function () { return 'Build time. What machines order today starts working 
     var k = Math.max(0, Math.min(1, (p - 0.06) / 0.2)), m = k * k * (3 - 2 * k);
     if (Math.abs(m - nmix) > 0.001 || (m === 0) !== (nmix === 0) || (m === 1) !== (nmix === 1)) setMix(m);
     var y = 2026 + Math.round(Math.max(0, Math.min(1, (p - 0.3) / 0.62)) * (topYear - 2026));
-    if (y !== year) { year = y; numbers(); if (nmix > 0.5 && cur && shown && !anim) render(shown, cur, true); }
+    if (y !== year) { year = y; numbers(); cols(); if (nmix > 0.5 && cur && shown && !anim) render(shown, cur, true); }
   }
   window.addEventListener('scroll', function () { if (!tick) { tick = true; requestAnimationFrame(stage); } }, { passive: true });
 
-  function apply(ms) { cur = compute(); outputs(); readout(cur, ms); numbers(); fit(); show(seriesOf(cur), cur, ms); }
+  function apply(ms) { cur = compute(); outputs(); readout(cur, ms); numbers(); fit(); if (ghost.cols) { ghost.sc = parseFloat(getComputedStyle($('formula-n')).fontSize) / parseFloat(getComputedStyle($('formula')).fontSize); cols(); if (nmix > 0) setMix(nmix); } show(seriesOf(cur), cur, ms); }
   function update(ms) {
     if (ms) { apply(ms); return; }
     if (queued) return; queued = true;
