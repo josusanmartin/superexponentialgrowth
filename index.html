@@ -65,7 +65,7 @@ h1 { font-weight: 500; font-size: clamp(1.6rem, 3.2vw, 2.5rem); line-height: 1.1
 .run { height: 170vh; }
 .fbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 24px; }
 .how { display: grid; }
-.how .hw { grid-area: 1 / 1; transition: opacity .25s ease; }
+.how .hw { grid-area: 1 / 1; }
 .how #how-b { opacity: 0; }
 .how b { font-weight: 500; font-variant-numeric: tabular-nums; }
 .years { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; color: var(--ink-2); font-variant-numeric: tabular-nums; opacity: 0; }
@@ -74,6 +74,11 @@ h1 { font-weight: 500; font-size: clamp(1.6rem, 3.2vw, 2.5rem); line-height: 1.1
 .layers { display: grid; }
 .layers > * { grid-area: 1 / 1; min-width: 0; }
 .layers .formula, .nlayer { will-change: opacity, transform; }
+/* once the numbers are in, the letters do not leave: they shrink, turn grey and park just above, so each number can be read against its letter */
+#formula { --mix: 0; --lab: 1; transform-origin: 0 0; position: relative; z-index: 1; color: color-mix(in srgb, var(--ink), var(--mute) calc(var(--mix) * 100%)); }
+#formula .bk, #formula .lab { opacity: var(--lab); animation-fill-mode: backwards; }   /* the entrance animation must not hold opacity at 1 afterwards */
+#formula .dt { color: inherit; }
+#formula > .g.out { transform: translate(calc(var(--dx, 0px) * var(--mix)), calc(var(--dy, 0px) * var(--mix))); }   /* on a phone the formula is two lines; parked, it closes up into one */
 .nlayer { align-self: start; opacity: 0; visibility: hidden; }
 /* letters or numbers: every slot holds both, the hero's class decides which shows */
 .N, .x, .val, .kv { display: none; }
@@ -852,30 +857,56 @@ tau: function () { return 'Build time. What machines order today starts working 
   }
   /* scroll drives the formula: letters, then the numbers fade in, then the years run from 2026 to the last one shown.
      m = how far the numbers have come in, 0 to 1 */
+  var ghost = { on: true, ty: 0, sc: 0.55, room: 0 };
   function setMix(m) {
     var was = nmix > 0.5; nmix = m;
-    var L = $('formula'), N = $('nlayer'), soft = !reduce;
-    L.style.opacity = (1 - m).toFixed(3); N.style.opacity = m.toFixed(3);
-    L.style.visibility = m >= 1 ? 'hidden' : 'visible'; N.style.visibility = m <= 0 ? 'hidden' : 'visible';
-    L.style.pointerEvents = m > 0.5 ? 'none' : ''; N.style.pointerEvents = m > 0.5 ? '' : 'none';
-    L.style.transform = soft && m > 0 ? 'translateY(' + (-12 * m).toFixed(1) + 'px) scale(' + (1 - 0.04 * m).toFixed(3) + ')' : '';
+    var L = $('formula'), N = $('nlayer'), soft = !reduce, g = soft ? m : (m > 0.5 ? 1 : 0);
+    if (!ghost.on) {                                                // no room above on a short screen: the letters just give way
+      L.style.setProperty('--mix', '0'); L.style.setProperty('--lab', '1');
+      L.style.opacity = (1 - g).toFixed(3); L.style.visibility = g >= 1 ? 'hidden' : 'visible'; L.style.pointerEvents = g > 0.5 ? 'none' : '';
+      L.style.transform = soft && g > 0 ? 'translateY(' + (-12 * g).toFixed(1) + 'px) scale(' + (1 - 0.04 * g).toFixed(3) + ')' : '';
+      L.setAttribute('aria-hidden', g > 0.5 ? 'true' : 'false');
+    } else {
+    L.style.opacity = ''; L.style.visibility = ''; L.style.pointerEvents = ''; L.removeAttribute('aria-hidden');
+    L.style.setProperty('--mix', g.toFixed(3));                    // the letters stay: smaller, grey, parked above the caption
+    L.style.setProperty('--lab', Math.max(0, 1 - 2.4 * g).toFixed(3));   // their bracket labels go: the numbers carry the same ones
+    L.style.transform = g > 0 ? 'translateY(' + (ghost.ty * g).toFixed(1) + 'px) scale(' + (1 - (1 - ghost.sc) * g).toFixed(3) + ')' : '';
+    }
+    N.style.opacity = m.toFixed(3);
+    N.style.visibility = m <= 0 ? 'hidden' : 'visible'; N.style.pointerEvents = m > 0.5 ? '' : 'none';
     N.style.transform = soft && m < 1 ? 'translateY(' + (12 * (1 - m)).toFixed(1) + 'px)' : '';
-    L.style.filter = soft && m > 0 && m < 1 ? 'blur(' + (7 * m).toFixed(1) + 'px)' : '';
     N.style.filter = soft && m > 0 && m < 1 ? 'blur(' + (7 * (1 - m)).toFixed(1) + 'px)' : '';
-    $('years').style.opacity = m.toFixed(3);
+    var late = Math.max(0, 3 * m - 2);                              // the caption clears out while the letters pass over it
+    $('years').style.opacity = late.toFixed(3);
+    $('how-a').style.opacity = Math.max(0, 1 - 3 * m).toFixed(3); $('how-b').style.opacity = late.toFixed(3);
     var now = m > 0.5;
     if (now !== was) {
-      $('how-a').style.opacity = now ? 0 : 1; $('how-b').style.opacity = now ? 1 : 0;
       $('how-a').setAttribute('aria-hidden', now ? 'true' : 'false'); $('how-b').setAttribute('aria-hidden', now ? 'false' : 'true');
-      L.setAttribute('aria-hidden', now ? 'true' : 'false'); N.setAttribute('aria-hidden', now ? 'false' : 'true');
+      N.setAttribute('aria-hidden', now ? 'false' : 'true');
       $('keys').classList.toggle('nums', now);
       if (cur && shown && !anim) render(shown, cur, true);
     }
   }
   var tick = false, pinTop = 10;
-  function place() {            // hold the formula mid-screen; set once per layout so it does not shift while scrolling
-    var pin = $('pin'); pinTop = Math.max(10, Math.round((window.innerHeight - pin.offsetHeight) / 2));
+  /* hold the formula mid-screen, with room above it for the parked letters; set once per layout so nothing shifts while scrolling.
+     offset* sizes ignore transforms, so this is safe to run mid-scroll */
+  function place() {
+    var pin = $('pin'), L = $('formula'), lead = L.querySelector('.lead'), last = L.querySelector('.g.out'), one = lead.querySelector('.row'), bar = pin.querySelector('.fbar');
+    var fs = parseFloat(getComputedStyle(L).fontSize), gap = 16;
+    var symY = lead.querySelector('.sym'), symA = last.querySelector('.row > .sym');
+    var topIn = function (el) { var y = 0; while (el && el !== L) { y += el.offsetTop; el = el.offsetParent; } return y; };   // inside the formula, whatever sits in between
+    var wrapped = last.offsetTop > one.offsetHeight * 0.5;                  // two lines on a phone
+    var dx = wrapped ? lead.offsetLeft + lead.offsetWidth + 0.06 * fs - last.offsetLeft : 0, dy = wrapped ? topIn(symY) - topIn(symA) : 0;
+    L.style.setProperty('--dx', dx.toFixed(1) + 'px'); L.style.setProperty('--dy', dy.toFixed(1) + 'px');
+    var wide = last.offsetLeft + dx + last.offsetWidth, tall = one.offsetHeight * 1.2;   // the letters alone, on one line
+    ghost.sc = Math.min(L.clientWidth / wide, Math.max(0.55, 20 / fs));
+    ghost.room = Math.round(tall * ghost.sc + gap);
+    ghost.ty = -(L.offsetTop - bar.offsetTop) - ghost.room;
+    ghost.on = pin.offsetHeight + ghost.room + 14 <= window.innerHeight;
+    var room = ghost.on ? ghost.room : 0;
+    pinTop = Math.max(10 + room, Math.round((window.innerHeight - pin.offsetHeight - room) / 2 + room));
     pin.style.top = pinTop + 'px';
+    setMix(nmix);
   }
   function stage() {
     tick = false;
