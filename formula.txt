@@ -1,0 +1,80 @@
+/* The whole model. Money in trillions of 2026 dollars, time t in years from 1 Jan 2026.
+
+     Y = Y_H + A K^alpha,   where K is every machine built so far:
+
+     K = integral of ( H n^t  +  [a s A K^(alpha + lambda)](t - tau) ) dt,  less wear at the rate delta
+                       people    machines, ordered tau years earlier
+
+     Y_H = Y_0 e^(g t)        people's output, 3% a year
+     A   = A_0 e^(gA t)       output per machine, rising as software improves
+     H n^t                    what people build: H this year, n times more each year (n = e^n below)
+     a(t)                     0 before the year T, 1 from then on: machines start building in year T
+     s                        share of machine output reinvested
+     lambda                   learning: each doubling of K makes the next machine cheaper
+     tau                      years between ordering a machine and having it at work
+
+   Starting point, 2026: people produce $125T, machines $0.18T, machine capital is about $1.5T, people build $0.71T a year.
+   lambda = 0.23 is a 15% cost fall per doubling. tau = 1 and T = 2033 are the paper's baseline.
+   gA, n and s are set so this formula reproduces the baseline of the paper's full model (agentic_growth_v3.py). */
+const BASE = { Y0: 125, g: 0.031, YM0: 0.177, K0: 1.5, H: 0.71, delta: 0.10, w: 1.0,
+  gA: Math.log(1.45), n: Math.log(1.45), s: 0.115, alpha: 1.0, lambda: 0.23, tau: 1.0, T: 7.0 };
+
+function simulate(over, tMax) {
+  const p = Object.assign({}, BASE, over || {});
+  tMax = tMax || 24;
+  const a = t => (t >= p.T ? 1 : 0);                                      // machines build from year T on
+  const lnK0 = Math.log(p.K0), eps = p.alpha + p.lambda;
+  const lnYM = (t, lnK) => Math.log(p.YM0) + p.gA * t + p.alpha * (lnK - lnK0);
+  // machine orders placed at t: a s A K^(alpha+lambda), with K in $ trillions and A = Y_M0 e^(gA t) / K_0^alpha
+  const lnOrders = (t, lnK) => (a(t) ? Math.log(p.s) : -700) + Math.log(p.YM0) + p.gA * t - p.alpha * lnK0 + eps * lnK;
+  const hT = [], hL = [];
+  function ordersAt(t) {
+    if (t < 0) return 0;
+    let lo = 0, hi = hT.length - 1;
+    if (hi < 0) return 0;
+    if (t >= hT[hi]) return Math.exp(hL[hi]);
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (hT[m] <= t) lo = m; else hi = m; }
+    const f = (t - hT[lo]) / (hT[hi] - hT[lo] || 1);
+    return Math.exp(hL[lo] + f * (hL[hi] - hL[lo]));
+  }
+  // d lnK / dt
+  const IH = t => p.H * Math.exp(p.n * t);                               // people's building, H n^t
+  const rate = (t, lnK) => (IH(t) + (p.tau === 0 ? Math.exp(lnOrders(t, lnK)) : ordersAt(t - p.tau))) / Math.exp(lnK) - p.delta;
+
+  let t = 0, lnK = lnK0, tStar = null;
+  const S = { t: [], lnY: [], lnH: [], lnM: [], lnK: [] };
+  function record() {
+    const m = lnYM(t, lnK), h = Math.log(p.Y0) + p.g * t;
+    hT.push(t); hL.push(lnOrders(t, lnK));
+    S.t.push(t); S.lnM.push(m); S.lnH.push(h); S.lnK.push(lnK);
+    S.lnY.push(Math.max(m, h) + Math.log(1 + Math.exp(-Math.abs(m - h))));
+  }
+  record();
+  for (let guard = 0; guard < 400000 && t < tMax - 1e-9; guard++) {
+    const k1 = rate(t, lnK);
+    if (k1 > 50 || lnK - lnK0 > 60) { if (p.tau === 0 && eps > 1 && k1 > 20) tStar = t; break; }   // only an undelayed loop with alpha + lambda > 1 blows up
+    const h = Math.min(0.005, 0.02 / Math.max(Math.abs(k1), 1e-9), tMax - t);
+    const k2 = rate(t + h / 2, lnK + h / 2 * k1), k3 = rate(t + h / 2, lnK + h / 2 * k2), k4 = rate(t + h, lnK + h * k3);
+    lnK += h / 6 * (k1 + 2 * k2 + 2 * k3 + k4); t += h;
+    record();
+  }
+  return { p, S, tStar, tEnd: t };
+}
+
+/* a recorded series at time t */
+function at(S, key, t) {
+  const T = S.t; let lo = 0, hi = T.length - 1;
+  if (t <= T[0]) return S[key][0];
+  if (t >= T[hi]) return S[key][hi];
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (T[m] <= t) lo = m; else hi = m; }
+  const f = (t - T[lo]) / (T[hi] - T[lo] || 1);
+  return S[key][lo] + f * (S[key][hi] - S[key][lo]);
+}
+/* growth of total output over the 12 months ending at t */
+function growthAt(S, t) { return Math.exp(at(S, 'lnY', t) - at(S, 'lnY', t - 1)) - 1; }
+/* first time a function of t goes above a threshold */
+function firstAbove(fn, t0, t1, thr) {
+  for (let t = t0; t <= t1 + 1e-9; t += 0.02) if (fn(t) > thr) return t;
+  return null;
+}
+if (typeof module !== 'undefined') module.exports = { BASE, simulate, at, growthAt, firstAbove };
