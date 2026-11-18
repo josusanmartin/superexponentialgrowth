@@ -346,6 +346,10 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .sum.up .meter .dot { background: var(--hot); }
 .ends { display: flex; justify-content: space-between; gap: 10px; font-size: 0.8rem; line-height: 1.3; color: var(--ink-2); }
 .panel .verdict { padding-left: 34px; max-width: none; font-size: 0.9rem; }
+
+/* the note that explains a letter or a number, shown beside it */
+#tip { position: fixed; z-index: 40; left: 0; top: 0; box-sizing: border-box; padding: 10px 14px; border-radius: 12px; background: var(--ink); color: #fff; font: 400 0.86rem/1.45 var(--f); letter-spacing: 0; box-shadow: 0 8px 28px rgba(6, 27, 49, 0.22); pointer-events: none; opacity: 0; visibility: hidden; transform: translateY(3px); transition: opacity .14s ease, transform .14s ease, visibility 0s linear .14s; }
+#tip.on { opacity: 1; visibility: visible; transform: none; transition: opacity .14s ease, transform .14s ease; }
 .paper { border-top: 1px solid var(--rule); padding-top: 56px; }
 .paper .meta { font-size: 0.88rem; color: var(--ink-2); margin: 0; max-width: none; }
 .foot { margin-top: 72px; font-size: 0.82rem; color: var(--ink-2); }
@@ -1054,13 +1058,14 @@ tau: function () { return 'Build time. What machines order today starts working 
     el.addEventListener('blur', function () { setFocus(''); });
   });
 
+  function light(k) { each('.sym', function (s) { s.classList.toggle('hot', !!k && s.dataset.k === k); }); }
   // one letter in play at a time: it lights up in the formula and on its slider, and one line says what it is
   function setHint(k) {
     hint = k || '';
     var txt = k ? HINTS[k]() : '';
     var el = $('hint'); el.textContent = k ? txt : IDLE; el.classList.toggle('live', !!k);
         var sm = document.querySelector('#mini small'); if (sm) sm.textContent = txt;
-    each('.sym', function (s) { s.classList.toggle('hot', !!k && s.dataset.k === k); });
+    light(k);
   }
   each('.ctl', function (el) {
     var k = el.dataset.h;
@@ -1068,14 +1073,34 @@ tau: function () { return 'Build time. What machines order today starts working 
     el.addEventListener('focusin', function () { setHint(k); });
     el.addEventListener('pointerdown', function () { setHint(k); });
   });
+  /* a letter or number in the formula explains itself right where it is: a small note beside the thing pointed at,
+     above the letters and below the numbers so the pair being compared stays in view */
+  var tip = document.createElement('div'); tip.id = 'tip'; tip.setAttribute('role', 'tooltip'); document.body.appendChild(tip);
+  var tipFor = null, tipTimer = 0;
+  function showTip(el) {
+    var k = el.dataset.k; if (!HINTS[k]) return;
+    var txt = HINTS[k]();
+    if (el.closest('.g.mch .row') && (k === 'gA' || k === 'K')) txt += ' Inside the bracket it is the value from the year the machines were ordered.';
+    tip.textContent = txt; tipFor = el; clearTimeout(tipTimer);
+    var r = el.getBoundingClientRect(), vw = document.documentElement.clientWidth, w = Math.min(300, vw - 24);
+    tip.style.width = w + 'px';
+    var h = tip.offsetHeight, below = !!el.closest('.nums') || !!el.closest('.lab') || r.top < h + 20;
+    tip.style.left = Math.round(Math.max(12, Math.min(vw - w - 12, r.left + r.width / 2 - w / 2))) + 'px';
+    tip.style.top = Math.round(below ? r.bottom + 10 : r.top - h - 10) + 'px';
+    tip.classList.add('on');
+  }
+  function hideTip() { tipFor = null; tip.classList.remove('on'); }
+  window.addEventListener('scroll', function () { if (tipFor) hideTip(); }, { passive: true });
   each('.sym', function (el) {
     var k = el.dataset.k;
-    el.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') setHint(k); });
-    el.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') setHint(''); });
-    el.addEventListener('focus', function () { setHint(k); });
-    el.addEventListener('click', function () {            // a letter with a slider takes you to it
-      setHint(k);
-      var sl = $(k); if (!sl || sl.type !== 'range') return;
+    el.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') { light(k); showTip(el); } });
+    el.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') { light(hint); hideTip(); } });
+    el.addEventListener('focus', function () { light(k); showTip(el); });
+    el.addEventListener('blur', function () { light(hint); hideTip(); });
+    el.addEventListener('click', function () {            // a letter with a slider takes you to it; the others just explain themselves
+      var sl = $(k);
+      if (!sl || sl.type !== 'range') { light(k); showTip(el); tipTimer = setTimeout(hideTip, 5000); return; }
+      hideTip(); setHint(k);
       sl.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
       try { sl.focus({ preventScroll: true }); } catch (e) { sl.focus(); }
     });
