@@ -453,12 +453,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
           <div class="scale" id="scale" role="group" aria-label="Scale"><button type="button" data-s="lin" aria-pressed="true">Linear</button><button type="button" data-s="log" aria-pressed="false">Log</button></div>
         </div>
         <div class="chart" id="chart"></div>
-        <div class="playrow">
-          <button type="button" class="play" id="play" aria-label="Play: shrink the build time from 3 years to zero">
-            <svg id="play-ico" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9.5-5.5z" fill="#121212"/></svg>
-          </button>
-          <div><b id="play-t"></b><p class="note"><span class="m">Y</span> is what the economy can produce, counted at 2026 prices. It is not GDP, which counts goods for less as they get cheap. <a href="paper.pdf" data-save="Super-Exponential Growth in the Agentic Era - San Martin (2026).pdf" target="_blank" rel="noopener">The paper works out the gap.</a></p></div>
-        </div>
+        <p class="note"><span class="m">Y</span> is what the economy can produce, counted at 2026 prices. It is not GDP, which counts goods for less as they get cheap. <a href="paper.pdf" data-save="Super-Exponential Growth in the Agentic Era - San Martin (2026).pdf" target="_blank" rel="noopener">The paper works out the gap.</a></p>
       </div>
     </div>
 
@@ -874,8 +869,6 @@ tau: function () { return 'Build time. What machines order today starts working 
       each('.step[data-k="' + k + '"]', function (b) { b.disabled = +b.dataset.d < 0 ? state[k] <= LIM[k][0] + 1e-9 : state[k] >= LIM[k][1] - 1e-9; });
     });
     $('reset').hidden = same(state, DEF);
-    $('play-t').innerHTML = play ? 'Build time <span class="m">τ</span>: ' + fmtTau(state.tau).toLowerCase() : 'Shrink the build time <span class="m">τ</span>';
-    $('play-ico').innerHTML = play ? '<path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" fill="#061b31"/>' : '<path d="M4 2.5v11l9.5-5.5z" fill="#061b31"/>';
     if (hint) setHint(hint);
   }
 
@@ -1012,20 +1005,7 @@ tau: function () { return 'Build time. What machines order today starts working 
     requestAnimationFrame(function () { queued = false; apply(0); });
   }
 
-  /* play: sweep the build time from 3 years to zero, hold on the singularity, then put things back */
-  function quiet() { if (play) { clearInterval(play.timer); play = null; } }
-  function halt() { if (!play) return; clearInterval(play.timer); state = play.saved; play = null; update(500); }
-  $('play').addEventListener('click', function () {
-    if (play) { halt(); return; }
-    var steps = [3, 2.5, 2, 1.5, 1, 0.75, 0.5, 0.25, 0], i = 0;
-    play = { saved: Object.assign({}, state) };
-    state.tau = steps[0]; update(450);
-    play.timer = setInterval(function () {
-      i++;
-      if (i < steps.length) { state.tau = steps[i]; update(420); }
-      else if (i >= steps.length + 3) halt();
-    }, 620);
-  });
+  function quiet() {}
 
   KEYS.forEach(function (k) {
     $(k).addEventListener('input', function (e) { quiet(); state[k] = parseFloat(e.target.value); update(0); });
