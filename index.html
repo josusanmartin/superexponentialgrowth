@@ -551,9 +551,9 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 <script>
 /* The whole model. Money in trillions of 2026 dollars, time t in years from 1 Jan 2026.
 
-     Y = Y_H + A K^alpha,   where K is every machine built so far:
+     Y_t = Y_H,t + A_t K_t^alpha,   where K is every machine built so far:
 
-     K = integral of ( H n^t  +  [a s A K^(alpha + lambda)](t - tau) ) dt,  less wear at the rate delta
+     K_t = K_0 + integral of ( H n^t  +  [a s A K^(alpha + lambda)](t - tau) ) dt,  less wear at the rate delta
                        people    machines, ordered tau years earlier
 
      Y_H = Y_0 e^(g t)        people's output, 3% a year
@@ -566,9 +566,10 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 
    Starting point, 2026: people produce $125T, machines $0.18T, machine capital is about $1.5T, people build $0.71T a year.
    lambda = 0.23 is a 15% cost fall per doubling. tau = 1 and T = 2033 are the paper's baseline.
-   gA, n and s are set so this formula reproduces the baseline of the paper's full model (agentic_growth_v3.py). */
+   gA, n and s are set so this formula reproduces the baseline of the paper's full model (agentic_growth_v3.py, v3.2):
+   A rises 1.5x a year, n = 1.4, s = 7%. */
 const BASE = { Y0: 125, g: 0.031, YM0: 0.177, K0: 1.5, H: 0.71, delta: 0.10, w: 1.0,
-  gA: Math.log(1.45), n: Math.log(1.45), s: 0.115, alpha: 1.0, lambda: 0.23, tau: 1.0, T: 7.0 };
+  gA: Math.log(1.5), n: Math.log(1.4), s: 0.07, alpha: 1.0, lambda: 0.23, tau: 1.0, T: 7.0 };
 
 function simulate(over, tMax) {
   const p = Object.assign({}, BASE, over || {});
@@ -636,7 +637,7 @@ function firstAbove(fn, t0, t1, thr) {
   var T1 = 24, TX = 19, X0 = 2026, X1 = 2045, W0 = 125, CAP = 1250, LMIN = 0.1, LMAX = 1e6, PAD = 1e30;
   var TG = []; for (var gi = 0; gi <= TX * 20; gi++) TG.push(gi * 0.05);
   /* the letters, in the units the sliders use: A and n as yearly multiples, s in percent, T as a calendar year */
-  var DEF = { gA: 1.45, alpha: 1, lam: 0.23, s: 11.5, tau: 1, T: 2033, n: 1.45 };
+  var DEF = { gA: 1.5, alpha: 1, lam: 0.23, s: 7, tau: 1, T: 2033, n: 1.4 };
   var KEYS = ['gA', 'alpha', 'lam', 's', 'tau', 'T', 'n'];
   var SCALE = { gA: 100, alpha: 100, lam: 100, s: 10, tau: 100, T: 10, n: 100 };
   var LIM = { gA: [1.1, 2], alpha: [0.4, 1], lam: [0, 0.5], s: [5, 40], tau: [0, 3], T: [2029, 2040], n: [1.1, 2] };
@@ -645,7 +646,7 @@ function firstAbove(fn, t0, t1, thr) {
     K: function () { return 'Machine capital: the chips, robots, fabs and power plants that do the work. About $1.5 trillion today.'; },
     Y: function () { return 'What people and machines can produce in a year, counted at today’s prices. $125 trillion now. It is not GDP.'; },
     YH: function () { return 'What people produce. It grows 3% a year whatever the machines do.'; },
-    gA: function () { return 'Productivity: what a dollar of machines produces. Software multiplies it by ' + state.gA.toFixed(2) + ' every year.'; },
+    gA: function () { return 'Productivity: what a dollar of machines produces. Software multiplies it by ' + state.gA.toFixed(2) + ' every year. The early dates depend mostly on this number.'; },
     alpha: function () { return 'What more machines are worth. At 1, twice the machines do twice the work. Below 1, each one adds less, as when land, metal or energy runs short.'; },
     lam: function () { return 'Learning by doing. Each doubling of the machine stock makes the next machine ' + Math.round((1 - Math.pow(2, -state.lam)) * 100) + '% cheaper.'; },
     s: function () { return 'The share of what machines produce that is spent on building more machines.'; },

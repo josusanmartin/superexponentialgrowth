@@ -24,6 +24,15 @@ Changes from v2 (second review):
     about psi*gE*40 ~ 11/yr). A delayed system is finite at every finite t, so it is never reported as a blow-up.
   * The delayed term switches on continuously at t = tau; C carries an absolute tolerance of $1 (it is in dollars).
 
+Changes in v3.2 (third review, November 2026):
+  * Learning is credited for capital that is delivered. Machine chip orders have first claim on fab output; the part
+    the fabs cannot fill is not built and earns no experience (chip_rule = "deliver"). In v3.1 every maturing order
+    counted toward C, filled or not (chip_rule = "v31"). chip_rule = "redirect" spends the unfilled part on fabs.
+  * Opening power balances. Compute draws w0 = P0 / K0 = 1.08 kW per H100e, so the 2025 stock uses exactly the
+    22 GW in place, and the 2025 robot base, already on the industrial grid, is not charged to AI power: demand is
+    K w_K + (R - R0) w_R. v3.1 opened with 27.4 GW of demand against 22 GW (old_power = True restores it).
+  * Software can slow: E grows at gE until tE and at gE2 afterwards (gE2 = None keeps one rate).
+
 Stocks (logs): K compute [H100e], F fab capacity [H100e/yr], R robots, P AI power [GW]; C cumulative
 machine-built capital [$ at 2026 prices] in linear space.  t = 0 is 1 Jan 2026.
     python3 agentic_growth_v3.py            # all scenarios -> v3_summary.csv
@@ -38,8 +47,9 @@ BASE = dict(
     vR=25_000.0, pC0=37_000.0, gp=math.log(1.37), pF=18_000.0, pR=100_000.0, pP=3e9,
     dK=0.20, dF=0.10, dR=0.08,
     s0=0.008, sM=0.30, sK=0.50, sF=0.20, sR=0.15, sP=0.15,
-    w0=1.1, gw=math.log(1.4), wR=1.0, A0=30.0, gA=math.log(1.4), Cref=100e9, c0=0.1, phi=0.6,
+    w0=22.0 / 20.3, gw=math.log(1.4), wR=1.0, A0=30.0, gA=math.log(1.4), Cref=100e9, c0=0.1, phi=0.6,
     ind0=0.655e6, ind_g=math.log(806/655)/3,
+    chip_rule="deliver", old_power=False, gE2=None, tE=5.0,
     hum=[0.09e6, 0.29e6, 0.50e6, 0.80e6, 1.20e6], hum_g=math.log(1.5),   # BofA 2026-2030, then +50%/yr
 )
 SCEN = {
@@ -58,6 +68,10 @@ SCEN["human_energy"]     = {**B, "mP": 0.0}
 SCEN["absorption_bound"] = {**B, "absorb": math.log(2.0)}
 SCEN["displacement"]     = {**B, "disp": 0.5}
 SCEN["power_backlash"]   = {**B, "gA": math.log(1.25)}             # datacentre moratoria: human-built power additions +25%/yr
+SCEN["software_slow"]    = {**B, "gE2": math.log(1.5)}             # software efficiency 2.5x a year to 2030, 1.5x after
+SCEN["software_slow_trend"] = {**B, "gE2": math.log(1.5), "Ta": 80.0}
+SCEN["chips_redirect"]   = {**B, "chip_rule": "redirect"}          # chip orders the fabs cannot fill are spent on fabs
+SCEN["v31"]              = {**B, "chip_rule": "v31", "old_power": True, "w0": 1.1}   # the model as first published
 
 T_END, T_MAX, BLOW, RATE_STOP, MAX_STEP = 10.0, 22.0, 40.0, 50.0, 0.01   # stop at ln(K/K0) > 40 or at dlnK/dt > 50/yr
 
@@ -74,11 +88,15 @@ def humanoids(t, p):
     i = int(math.floor(t)); f = t - i
     return h[i] * (h[i + 1] / h[i]) ** f
 def robots_human(t, p): return p["ind0"] * math.exp(p["ind_g"] * t) + humanoids(t, p)
+def power_use(K, R, t, p):
+    """AI power drawn, GW: compute at w0 falling with efficiency, plus robots added since 2025."""
+    robots = R if p["old_power"] else max(R - p["R0"], 0.0)
+    return K * p["w0"] * math.exp(-p["gw"] * t) * 1e-6 + robots * p["wR"] * 1e-6
 def wright(C, p): return (1 + C / p["Cref"]) ** (-math.log2(1 - p["LR"])) if p["LR"] > 0 else 1.0
 
 def outputs(t, y, p):
     K, F, R, P = map(math.exp, y[:4]); C = y[4]          # C integrated in linear space
-    E = math.exp(p["gE"] * t)
+    E = math.exp(p["gE"] * t) if p["gE2"] is None else math.exp(p["gE"] * min(t, p["tE"]) + p["gE2"] * max(t - p["tE"], 0.0))
     YH = human_gdp(t, p)
     YA = p["YA0"] * ((K / p["K0"]) * E) ** p["rho"]
     YR = p["vR"] * R * E ** p["psi"]
@@ -102,15 +120,18 @@ def rhs(t, y, p, hist):
     tau = p["tau"]
     I_m_done = I_m_now if tau == 0 else (machine_orders(t - tau, hist(t - tau), p) if t - tau >= 0 else 0.0)
     hK, hF = p["sK"] / (p["sK"] + p["sF"]), p["sF"] / (p["sK"] + p["sF"])
-    dF = min(I_h * hF / p["pF"], F * (p["gF"] + p["dF"])) + I_m_done * p["sF"] / p["pF"] - p["dF"] * F
-    dK = min((I_h * hK + I_m_done * p["sK"]) / pC, F) - p["dK"] * K
+    chips_m = min(I_m_done * p["sK"] / pC, F)                           # machine orders have first claim on fab output
+    chips_h = min(I_h * hK / pC, F - chips_m)
+    unfilled = I_m_done * p["sK"] - chips_m * pC                        # $ of chip orders the fabs cannot fill
+    extra_fabs = unfilled / p["pF"] if p["chip_rule"] == "redirect" else 0.0
+    dF = min(I_h * hF / p["pF"], F * (p["gF"] + p["dF"])) + I_m_done * p["sF"] / p["pF"] + extra_fabs - p["dF"] * F
+    dK = chips_m + chips_h - p["dK"] * K
     dR = robots_human(t, p) + I_m_done * p["sR"] / p["pR"] - p["dR"] * R
     dP = p["A0"] * math.exp(p["gA"] * t) + p["mP"] * I_m_done * p["sP"] / p["pP"]   # human-built additions path + machine-built
-    kW = p["w0"] * math.exp(-p["gw"] * t)
-    if K * kW * 1e-6 + R * p["wR"] * 1e-6 >= 0.999 * P:                  # power rationing
+    if power_use(K, R, t, p) >= 0.999 * P:                              # power rationing
         g = dP / P
         dK = min(dK, K * (g + p["gw"])); dR = min(dR, R * g)
-    dC = I_m_done
+    dC = I_m_done - (unfilled if p["chip_rule"] == "deliver" else 0.0)  # experience comes from capital that is built
     return [dK / K, dF / F, dR / R, dP / P, dC]
 
 def run(name, over=None, t_max=T_MAX):
@@ -143,9 +164,8 @@ def run(name, over=None, t_max=T_MAX):
     t_last = t
     def st(tt):
         K, F, R, P, C, E, YH, YA, YR, a = outputs(tt, hist(tt), p)
-        kW = p["w0"] * math.exp(-p["gw"] * tt)
         return dict(year=2025 + tt, Y=YH + YA + YR, YH=YH, YA=YA, YR=YR, K=K, F=F, R=R, P=P, C=C, a=a, W=wright(C, p),
-                    GW=K * kW * 1e-6 + R * p["wR"] * 1e-6, mshare=(YA + YR) / (YH + YA + YR))
+                    GW=power_use(K, R, tt, p), mshare=(YA + YR) / (YH + YA + YR))
     def growth(tt): return st(tt)["Y"] / st(tt - 1)["Y"] - 1
     g30 = mach = None
     for tt in np.arange(1.0, t_last, 0.01):

@@ -1,8 +1,8 @@
 /* The whole model. Money in trillions of 2026 dollars, time t in years from 1 Jan 2026.
 
-     Y = Y_H + A K^alpha,   where K is every machine built so far:
+     Y_t = Y_H,t + A_t K_t^alpha,   where K is every machine built so far:
 
-     K = integral of ( H n^t  +  [a s A K^(alpha + lambda)](t - tau) ) dt,  less wear at the rate delta
+     K_t = K_0 + integral of ( H n^t  +  [a s A K^(alpha + lambda)](t - tau) ) dt,  less wear at the rate delta
                        people    machines, ordered tau years earlier
 
      Y_H = Y_0 e^(g t)        people's output, 3% a year
@@ -15,9 +15,10 @@
 
    Starting point, 2026: people produce $125T, machines $0.18T, machine capital is about $1.5T, people build $0.71T a year.
    lambda = 0.23 is a 15% cost fall per doubling. tau = 1 and T = 2033 are the paper's baseline.
-   gA, n and s are set so this formula reproduces the baseline of the paper's full model (agentic_growth_v3.py). */
+   gA, n and s are set so this formula reproduces the baseline of the paper's full model (agentic_growth_v3.py, v3.2):
+   A rises 1.5x a year, n = 1.4, s = 7%. */
 const BASE = { Y0: 125, g: 0.031, YM0: 0.177, K0: 1.5, H: 0.71, delta: 0.10, w: 1.0,
-  gA: Math.log(1.45), n: Math.log(1.45), s: 0.115, alpha: 1.0, lambda: 0.23, tau: 1.0, T: 7.0 };
+  gA: Math.log(1.5), n: Math.log(1.4), s: 0.07, alpha: 1.0, lambda: 0.23, tau: 1.0, T: 7.0 };
 
 function simulate(over, tMax) {
   const p = Object.assign({}, BASE, over || {});
