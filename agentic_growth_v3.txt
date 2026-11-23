@@ -1,44 +1,13 @@
+"""Super-Exponential Growth in the Agentic Era: the full four-stock model.
+
+Stocks: compute K [H100e], fab capacity F [H100e/yr], robots R, AI power P [GW], all in logs, and cumulative
+commissioned machine construction C [$ at 2026 prices] in levels. t = 0 is 1 January 2026.
+
+Machine-built capital ordered at t enters service at t + tau and earns experience only when it is commissioned.
+When power is short, new chips and robots are commissioned in the same proportion.
+BASE holds the calibration and SCEN the scenarios; flags starting legacy_ restore the rules of the first release.
 """
-Super-Exponential Growth in the Agentic Era -- model v3.
-
-Changes from v2 (second review):
-  * Construction lead time tau: machine-built fabs, robots and power plants ordered at t arrive at t + tau.
-    Delay-differential equations, solved by the method of steps. tau = 0 reproduces v2.
-  * I_M is physical, not cash: the share s_M of machine labor (agent-hours and robot-hours) redirected to
-    construction, converted to capital at 2026 unit costs. Wright's law lowers those unit costs as cumulative
-    machine-built capital C grows: dC/dt = completed machine-built capital.
-  * Human-built investment funds chips and fabs only (shares renormalised); human-built robots follow the
-    IFR + BofA humanoid path and human-built power grows at g_P. Stated explicitly.
-  * Power rationing stated: when K w_K + R w_R reaches P, compute and robots each grow no faster than P
-    (compute also gains the efficiency trend).
-  * Three mechanisms are separable: intelligence amplification (g_E, psi), capital self-replication (a(t)),
-    production learning (LR). Scenarios isolate each.
-  * s_0 recalibrated to 0.8% of GDP (2026 AI capex ~ $1T incl. non-hyperscalers).
-  * BofA humanoid path: 90k, 290k, 500k, 800k, 1.2M (2026-2030), then +50%/yr.
-  * v3.1: human-built AI power is an additions path, not a growth rate: A_H(t) = A0 exp(gA t), A0 = 30 GW/yr in 2026,
-    gA = ln 1.4 (SemiAnalysis Oct-2026: 25 GW net IT capacity 2026, 51 GW 2027; Patel Aug-2026: 30/50/70/90-100 GW
-    for 2026-29, ~200 GW cumulative by end-2028). s_max raised (Patel: hyperscaler capex $1T 2026, >$2T 2028).
-
-  * Stopping rule: a run ends when ln(K/K0) > 40 or dlnK/dt > 50/yr. It is reported as a finite-time blow-up
-    only when tau = 0 and the growth rate at the stop exceeds 20/yr (a double-exponential path crosses e^40 at
-    about psi*gE*40 ~ 11/yr). A delayed system is finite at every finite t, so it is never reported as a blow-up.
-  * The delayed term switches on continuously at t = tau; C carries an absolute tolerance of $1 (it is in dollars).
-
-Changes in v3.2 (third review, November 2026):
-  * Learning is credited for capital that is delivered. Machine chip orders have first claim on fab output; the part
-    the fabs cannot fill is not built and earns no experience (chip_rule = "deliver"). In v3.1 every maturing order
-    counted toward C, filled or not (chip_rule = "v31"). chip_rule = "redirect" spends the unfilled part on fabs.
-  * Opening power balances. Compute draws w0 = P0 / K0 = 1.08 kW per H100e, so the 2025 stock uses exactly the
-    22 GW in place, and the 2025 robot base, already on the industrial grid, is not charged to AI power: demand is
-    K w_K + (R - R0) w_R. v3.1 opened with 27.4 GW of demand against 22 GW (old_power = True restores it).
-  * Software can slow: E grows at gE until tE and at gE2 afterwards (gE2 = None keeps one rate).
-
-Stocks (logs): K compute [H100e], F fab capacity [H100e/yr], R robots, P AI power [GW]; C cumulative
-machine-built capital [$ at 2026 prices] in linear space.  t = 0 is 1 Jan 2026.
-    python3 agentic_growth_v3.py            # all scenarios -> v3_summary.csv
-    python3 v3_sens.py                      # grids in section 6.3
-"""
-import math, csv, sys
+import math
 import numpy as np
 from scipy.integrate import solve_ivp
 
@@ -60,7 +29,7 @@ SCEN = {
 B = SCEN["baseline"]
 SCEN["baseline_tau0"]    = {**B, "tau": 0.0}
 SCEN["baseline_tau2"]    = {**B, "tau": 2.0}
-SCEN["trend_only"]       = {**B, "Ta": 80.0}                       # no self-replication
+SCEN["trend_only"]       = {**B, "Ta": None}                       # no self-replication
 SCEN["replication_only"] = {**B, "LR": 0.0, "psi": 0.0}            # a(t) on, no learning, robots not amplified
 SCEN["repl_plus_intel"]  = {**B, "LR": 0.0}                        # + intelligence amplification (psi)
 SCEN["repl_plus_learn"]  = {**B, "psi": 0.0}                       # + production learning (LR)
@@ -69,9 +38,9 @@ SCEN["absorption_bound"] = {**B, "absorb": math.log(2.0)}
 SCEN["displacement"]     = {**B, "disp": 0.5}
 SCEN["power_backlash"]   = {**B, "gA": math.log(1.25)}             # datacentre moratoria: human-built power additions +25%/yr
 SCEN["software_slow"]    = {**B, "gE2": math.log(1.5)}             # software efficiency 2.5x a year to 2030, 1.5x after
-SCEN["software_slow_trend"] = {**B, "gE2": math.log(1.5), "Ta": 80.0}
+SCEN["software_slow_trend"] = {**B, "gE2": math.log(1.5), "Ta": None}
 SCEN["chips_redirect"]   = {**B, "chip_rule": "redirect"}          # chip orders the fabs cannot fill are spent on fabs
-SCEN["v31"]              = {**B, "chip_rule": "v31", "old_power": True, "w0": 1.1}   # the model as first published
+
 
 T_END, T_MAX, BLOW, RATE_STOP, MAX_STEP = 10.0, 22.0, 40.0, 50.0, 0.01   # stop at ln(K/K0) > 40 or at dlnK/dt > 50/yr
 
@@ -87,7 +56,13 @@ def humanoids(t, p):
     if t >= 4: return h[4] * math.exp(p["hum_g"] * (t - 4))
     i = int(math.floor(t)); f = t - i
     return h[i] * (h[i + 1] / h[i]) ** f
-def robots_human(t, p): return p["ind0"] * math.exp(p["ind_g"] * t) + humanoids(t, p)
+def robots_human(t, p):
+    # Forecasts are calendar-year quantities. The archived calibration treats
+    # them as January flow rates; the annual-volume check spreads each quoted
+    # quantity evenly over its calendar year before applying power rationing.
+    if p.get("annual_robot_volumes"):
+        t = math.floor(t)
+    return p["ind0"] * math.exp(p["ind_g"] * t) + humanoids(t, p)
 def power_use(K, R, t, p):
     """AI power drawn, GW: compute at w0 falling with efficiency, plus robots added since 2025."""
     robots = R if p["old_power"] else max(R - p["R0"], 0.0)
@@ -105,7 +80,7 @@ def outputs(t, y, p):
         if YA + YR > cap:
             f = cap / (YA + YR); YA, YR = YA * f, YR * f
     YH = max(YH - p["disp"] * (YA + YR - p["YA0"] - p["vR"] * p["R0"]), 0.2 * YH)
-    return K, F, R, P, C, E, YH, YA, YR, logistic(t, p["Ta"], p["wa"])
+    return K, F, R, P, C, E, YH, YA, YR, (0.0 if p["Ta"] is None else logistic(t, p["Ta"], p["wa"]))
 
 def machine_orders(t, y, p):
     """Machine construction at t, $ of capital at 2026 unit costs: automated share of machine labor, learning-boosted."""
@@ -126,12 +101,36 @@ def rhs(t, y, p, hist):
     extra_fabs = unfilled / p["pF"] if p["chip_rule"] == "redirect" else 0.0
     dF = min(I_h * hF / p["pF"], F * (p["gF"] + p["dF"])) + I_m_done * p["sF"] / p["pF"] + extra_fabs - p["dF"] * F
     dK = chips_m + chips_h - p["dK"] * K
-    dR = robots_human(t, p) + I_m_done * p["sR"] / p["pR"] - p["dR"] * R
+    robots_m = I_m_done * p["sR"] / p["pR"]
+    gross_robots = robots_human(t, p) + robots_m
+    dR = gross_robots - p["dR"] * R
     dP = p["A0"] * math.exp(p["gA"] * t) + p["mP"] * I_m_done * p["sP"] / p["pP"]   # human-built additions path + machine-built
-    if power_use(K, R, t, p) >= 0.999 * P:                              # power rationing
-        g = dP / P
-        dK = min(dK, K * (g + p["gw"])); dR = min(dR, R * g)
-    dC = I_m_done - (unfilled if p["chip_rule"] == "deliver" else 0.0)  # experience comes from capital that is built
+    # Commission chips and robots in equal proportions if their combined draw
+    # would exhaust power. Unused resources lapse. Human and machine orders
+    # face the same power constraint after the fab allocation.
+    chip_watts = p["w0"] * math.exp(-p["gw"] * t) * 1e-6
+    robot_watts = p["wR"] * 1e-6
+    demand = power_use(K, R, t, p)
+    retiring_load = chip_watts * K * (p["gw"] + p["dK"]) + robot_watts * p["dR"] * R
+    new_load = chip_watts * (chips_m + chips_h) + robot_watts * gross_robots
+    headroom = max(P - demand, 0.0)
+    available = dP + retiring_load + headroom / p.get("dispatch_window", 0.01)
+    fraction = min(1.0, available / new_load) if new_load else 1.0
+    dK = fraction * (chips_m + chips_h) - p["dK"] * K
+    dR = fraction * gross_robots - p["dR"] * R
+    if p.get("legacy_power_rule"):
+        dK = chips_m + chips_h - p["dK"] * K
+        dR = gross_robots - p["dR"] * R
+        if demand >= 0.999 * P:
+            dK = min(dK, K * (dP / P + p["gw"]))
+            dR = min(dR, R * dP / P)
+    chip_accept = (dK + p["dK"] * K) / (chips_m + chips_h) if chips_m + chips_h else 0.
+    robot_accept = (dR + p["dR"] * R) / gross_robots
+    machine_fabs = p["sF"] * I_m_done + extra_fabs * p["pF"]
+    machine_power = p["mP"] * p["sP"] * I_m_done
+    dC = chip_accept * chips_m * pC + robot_accept * robots_m * p["pR"] + machine_fabs + machine_power
+    if p.get("legacy_experience"):
+        dC = I_m_done - unfilled
     return [dK / K, dF / F, dR / R, dP / P, dC]
 
 def run(name, over=None, t_max=T_MAX):
@@ -142,29 +141,31 @@ def run(name, over=None, t_max=T_MAX):
         if not chunks: return y0
         for (t0, t1, sol) in chunks:
             if t0 - 1e-12 <= t <= t1 + 1e-12: return sol.sol(t)
-        return chunks[-1][2].sol(t)
-    def blow(t, y): return BLOW - (y[0] - math.log(p["K0"]))
-    def fast(t, y): return RATE_STOP - rhs(t, y, p, hist)[0]
+        raise ValueError(f"requested time {t} is outside solver history")
+    def blow(t, y): return p.get("stock_stop", BLOW) - (y[0] - math.log(p["K0"]))
+    def fast(t, y): return p.get("rate_stop", RATE_STOP) - rhs(t, y, p, hist)[0]
     blow.terminal = fast.terminal = True
     t, y, t_star, rate_at_stop = 0.0, y0, None, None
     step = tau if tau > 0 else t_max
     while t < t_max - 1e-9:
         t1 = min(t + step, t_max)
-        sol = solve_ivp(lambda tt, yy: rhs(tt, yy, p, hist), (t, t1), y, events=[blow, fast], max_step=MAX_STEP,
-                        rtol=1e-7, atol=[1e-9] * 4 + [1.0], dense_output=True, method="RK45")   # C is in dollars
+        if p.get("annual_robot_volumes"):
+            t1 = min(t1, math.floor(t + 1e-10) + 1)
+        sol = solve_ivp(lambda tt, yy: rhs(tt, yy, p, hist), (t, t1), y, events=[blow, fast], max_step=p.get("max_step", MAX_STEP),
+                        rtol=p.get("rtol", 1e-7), atol=[1e-9] * 4 + [1.0], dense_output=True, method="RK45")   # C is in dollars
+        if not sol.success:
+            raise RuntimeError(sol.message)
         chunks.append((t, sol.t[-1], sol))
         hit = [(ev[0], i) for i, ev in enumerate(sol.t_events) if len(ev)]
         if hit:
             te, i = min(hit); rate_at_stop = rhs(te, sol.y_events[i][0], p, hist)[0]
-            # finite-time blow-up: no delay, and the growth rate is already exploding when K has grown e^40-fold
-            # (a double-exponential path crosses e^40 at a rate of only ~psi*gE*40 ~ 11/yr). A delayed system never blows up.
-            if tau == 0 and (i == 1 or rate_at_stop > 20): t_star = te
+            t_star = ("stock", "rate")[i]  # finite numerical event only
             t = te; break
         t, y = sol.t[-1], sol.y[:, -1]
     t_last = t
     def st(tt):
         K, F, R, P, C, E, YH, YA, YR, a = outputs(tt, hist(tt), p)
-        return dict(year=2025 + tt, Y=YH + YA + YR, YH=YH, YA=YA, YR=YR, K=K, F=F, R=R, P=P, C=C, a=a, W=wright(C, p),
+        return dict(year=2026 + tt, Y=YH + YA + YR, YH=YH, YA=YA, YR=YR, K=K, F=F, R=R, P=P, C=C, a=a, W=wright(C, p),
                     GW=power_use(K, R, tt, p), mshare=(YA + YR) / (YH + YA + YR))
     def growth(tt): return st(tt)["Y"] / st(tt - 1)["Y"] - 1
     g30 = mach = None
@@ -174,25 +175,3 @@ def run(name, over=None, t_max=T_MAX):
         if mach is None and s["YA"] + s["YR"] > s["YH"]: mach = 2026 + tt
     return p, st, growth, t_star, t_last, g30, mach
 
-if __name__ == "__main__":
-    names = sys.argv[1:] or list(SCEN)
-    out = []
-    for n in names:
-        p, st, growth, ts, tl, g30, mach = run(n)
-        row = dict(scenario=n, tau=p["tau"])
-        print(f"\n== {n} (tau={p['tau']}) ==")
-        for yr in [2026, 2028, 2030, 2032, 2033, 2034, 2035, 2037, 2040, 2045, 2050]:
-            tt = yr - 2025
-            if tt > tl: break
-            s = st(tt); g = growth(tt)
-            row[f"g{yr}"] = g
-            print(f"end{yr} Y={s['Y']/1e12:9.1f}T YH={s['YH']/1e12:6.1f} YA={s['YA']/1e12:9.2f} YR={s['YR']/1e12:9.2f} g={g*100:8.1f}% "
-                  f"K={s['K']/1e6:9.1f}M R={s['R']/1e6:8.2f}M P={s['P']:8.0f}GW use={s['GW']:6.0f} a={s['a']:.2f} W={s['W']:.2f}")
-        s30 = st(5.0)
-        row.update(Y2030=s30["Y"]/1e12, YA2030=s30["YA"]/1e12, YR2030=s30["YR"]/1e12, K2030=s30["K"]/1e6, R2030=s30["R"]/1e6, GW2030=s30["GW"],
-                   g30=g30, mach=mach, blowup=(2026 + ts) if ts else None, stop=2026 + tl, K_sep26=st(0.75)["K"]/1e6, YA_end26=st(1.0)["YA"]/1e9)
-        print(f"  >30%: {g30}  machine>human: {mach}  blowup: {row['blowup']}  stopped: {row['stop']:.1f}")
-        out.append(row)
-    keys = sorted({k for r in out for k in r}, key=lambda k: (k not in ("scenario", "tau"), k))
-    with open("v3_summary.csv", "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=keys); w.writeheader(); w.writerows(out)
